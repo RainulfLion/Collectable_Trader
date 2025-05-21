@@ -14,10 +14,47 @@ WANT_FILE = 'want.json'
 HAVE_FILE = 'have.json'
 DONT_WANT_FILE = 'dont_want.json'
 
+# Additional user data
+USER_DATA_DIR = os.path.join(os.path.dirname(__file__), 'users')
+SCROLLED_FILE = 'scrolled.json'
+SALE_ITEMS_FILE = 'sale_items.json'
+
+
+def get_user_dir(username):
+    path = os.path.join(USER_DATA_DIR, username)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def load_scrolled_flag(username):
+    flag_path = os.path.join(get_user_dir(username), SCROLLED_FILE)
+    try:
+        with open(flag_path, 'r') as f:
+            data = json.load(f)
+            return bool(data.get('scrolled'))
+    except Exception:
+        return False
+
+
+def set_scrolled_flag(username, value=True):
+    flag_path = os.path.join(get_user_dir(username), SCROLLED_FILE)
+    with open(flag_path, 'w') as f:
+        json.dump({'scrolled': bool(value)}, f)
+
+
+def load_user_wants(username):
+    path = os.path.join(get_user_dir(username), 'want.json')
+    try:
+        with open(path, 'r') as f:
+            return json.load(f)
+    except Exception:
+        return []
+
 class GIJoeApp:
-    def __init__(self, root, username):
+    def __init__(self, root, username, on_scrolled=None):
         self.root = root
         self.username = username
+        self.on_scrolled = on_scrolled
         self.root.title(f'GI JOE Collectables Viewer - {self.username}')
         self.root.geometry('600x700')
 
@@ -26,6 +63,7 @@ class GIJoeApp:
         self.want_mode = False  # Track if we're in want-list mode
         self.want_image_paths = []
         self.want_index = 0
+        self.has_scrolled = load_scrolled_flag(self.username)
         self.categories = {'want': set(), 'have': set(), 'dont_want': set()}
         self.load_categories()
         self.current_sort = None  # Track current sort mode
@@ -87,6 +125,12 @@ class GIJoeApp:
         self.display_image()
 
     def open_shop_window(self):
+        if not self.has_scrolled:
+            messagebox.showinfo(
+                "Browse Shop",
+                "Please scroll through the GI JOE list before browsing items for sale.",
+            )
+            return
         ShopWindow(self.root, self.username)
 
     def load_all_images(self):
@@ -136,7 +180,21 @@ class GIJoeApp:
         if self.want_mode:
             self.want_index = (self.want_index + 1) % len(paths)
         else:
+            old = self.current_index
             self.current_index = (self.current_index + 1) % len(paths)
+            if (
+                not self.has_scrolled
+                and old == len(paths) - 1
+                and self.current_index == 0
+            ):
+                self.has_scrolled = True
+                set_scrolled_flag(self.username, True)
+                if self.on_scrolled:
+                    self.on_scrolled()
+                messagebox.showinfo(
+                    "List Complete",
+                    "You have viewed all GI JOE images! You can now browse the shop from the main menu.",
+                )
         self.display_image()
 
     def prev_image(self):
@@ -146,7 +204,21 @@ class GIJoeApp:
         if self.want_mode:
             self.want_index = (self.want_index - 1) % len(paths)
         else:
+            old = self.current_index
             self.current_index = (self.current_index - 1) % len(paths)
+            if (
+                not self.has_scrolled
+                and old == 0
+                and self.current_index == len(paths) - 1
+            ):
+                self.has_scrolled = True
+                set_scrolled_flag(self.username, True)
+                if self.on_scrolled:
+                    self.on_scrolled()
+                messagebox.showinfo(
+                    "List Complete",
+                    "You have viewed all GI JOE images! You can now browse the shop from the main menu.",
+                )
         self.display_image()
 
     def mark_want(self):
@@ -285,20 +357,48 @@ class GIJoeApp:
         self.current_index = 0
         self.want_index = 0
         self.display_image()
-
     def get_active_index(self):
         return self.want_index if self.want_mode else self.current_index
 
+
+
+
+class MainMenu(tk.Tk):
+    def __init__(self, username):
+        super().__init__()
+        self.username = username
+        self.title(f"GI JOE Trader - {username}")
+        self.geometry("300x200")
+        tk.Button(self, text="View GI JOE List", command=self.open_list).pack(pady=10)
+        tk.Button(self, text="Browse For Sale", command=self.open_shop).pack(pady=10)
+        tk.Button(self, text="Quit", command=self.destroy).pack(pady=10)
+        self.update_scrolled()
+
+    def update_scrolled(self):
+        self.has_scrolled = load_scrolled_flag(self.username)
+
+    def open_list(self):
+        GIJoeApp(tk.Toplevel(self), self.username, on_scrolled=self.update_scrolled)
+
+    def open_shop(self):
+        self.update_scrolled()
+        if not self.has_scrolled:
+            messagebox.showinfo(
+                "Browse Shop",
+                "Please scroll through the GI JOE list before browsing items for sale.",
+            )
+            return
+        ShopWindow(tk.Toplevel(self), self.username)
+
 def main():
-    root = tk.Tk()
-    # User selection popup
-    username = UserSelectionDialog(root).result
-    print(f"DEBUG: username dialog returned: {repr(username)}")
+    login_root = tk.Tk()
+    login_root.withdraw()
+    username = UserSelectionDialog(login_root).result
+    login_root.destroy()
     if not username:
-        root.destroy()
         return
-    app = GIJoeApp(root, username)
-    root.mainloop()
+    menu = MainMenu(username)
+    menu.mainloop()
 
 # --- User selection dialog ---
 class UserSelectionDialog(tk.simpledialog.Dialog):
@@ -317,7 +417,7 @@ class ShopWindow(tk.Toplevel):
         self.title(f"Shop - {username}")
         self.geometry('500x600')
         self.username = username
-        self.want_only = tk.BooleanVar(value=False)
+        self.want_only = tk.BooleanVar(value=True)
 
         top_frame = tk.Frame(self)
         top_frame.pack(fill=tk.X, pady=5)
@@ -325,6 +425,7 @@ class ShopWindow(tk.Toplevel):
         tk.Checkbutton(top_frame, text="Show Want List Only", variable=self.want_only, command=self.refresh_items).pack(side=tk.LEFT)
         self.items_listbox = tk.Listbox(self, width=60, height=25)
         self.items_listbox.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+        self.items_listbox.bind("<<ListboxSelect>>", self.show_item_details)
         self.refresh_items()
 
     def add_item_dialog(self):
@@ -332,9 +433,35 @@ class ShopWindow(tk.Toplevel):
         messagebox.showinfo("Add Item", "Add item dialog coming soon!")
 
     def refresh_items(self):
-        # Load items and filter if needed (to be implemented)
         self.items_listbox.delete(0, tk.END)
-        self.items_listbox.insert(tk.END, "[Shop items will appear here]")
+        try:
+            with open(SALE_ITEMS_FILE, "r") as f:
+                items = json.load(f)
+        except Exception:
+            items = []
+        if self.want_only.get():
+            wants = load_user_wants(self.username)
+            want_names = {
+                os.path.splitext(os.path.basename(p))[0].lower() for p in wants
+            }
+            self.filtered = [
+                it
+                for it in items
+                if str(it.get("id", "")).lower() in want_names
+                or it.get("name", "").lower() in want_names
+            ]
+        else:
+            self.filtered = items
+        for it in self.filtered:
+            self.items_listbox.insert(tk.END, f"{it.get('name', 'Unknown')} (${it.get('price', '0')})")
+
+    def show_item_details(self, event):
+        sel = self.items_listbox.curselection()
+        if not sel:
+            return
+        item = self.filtered[sel[0]]
+        details = f"ID: {item.get('id', '')}\nName: {item.get('name', '')}\nPrice: ${item.get('price', '')}\n{item.get('description', '')}"
+        messagebox.showinfo(item.get('name', 'Item'), details)
     def sort_by_year(self):
         def get_year(path):
             rel_path = os.path.relpath(path, BASE_DIR).replace('\\', '/')
